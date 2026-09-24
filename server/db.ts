@@ -26,6 +26,24 @@ db.exec(`
     playedAt INTEGER NOT NULL,
     players INTEGER NOT NULL
   );
+`);
+
+// CREATE TABLE IF NOT EXISTS lässt eine bereits existierende, ältere Tabelle
+// unverändert — fehlende Spalten (z.B. aus einer Zeit vor questionCount/plays)
+// müssen daher per ALTER TABLE nachgezogen werden, bevor die Indizes unten
+// darauf zugreifen.
+const existingQuizColumns = new Set((db.prepare(`PRAGMA table_info(quizzes)`).all() as Array<{ name: string }>).map((c) => c.name));
+if (!existingQuizColumns.has("questionCount")) {
+  db.exec(`ALTER TABLE quizzes ADD COLUMN questionCount INTEGER NOT NULL DEFAULT 0`);
+  db.exec(`UPDATE quizzes SET questionCount = (
+    SELECT COUNT(*) FROM json_each(json_extract(data, '$.questions'))
+  ) WHERE questionCount = 0`);
+}
+if (!existingQuizColumns.has("plays")) {
+  db.exec(`ALTER TABLE quizzes ADD COLUMN plays INTEGER NOT NULL DEFAULT 0`);
+}
+
+db.exec(`
   CREATE INDEX IF NOT EXISTS idx_quizzes_createdAt ON quizzes(createdAt DESC);
   CREATE INDEX IF NOT EXISTS idx_quizzes_plays ON quizzes(plays DESC);
   CREATE INDEX IF NOT EXISTS idx_plays_quizId ON plays(quizId);
