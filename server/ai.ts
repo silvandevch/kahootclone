@@ -21,6 +21,11 @@ const client = new OpenAI({
   maxRetries: 0,
 });
 
+// TEMPORÄR deaktiviert: web_search/web_image_search-Tools aus. Auf false
+// setzen, um sie wieder einzuschalten — steuert sowohl den Prompt-Text als
+// auch, ob das Modell die Tools überhaupt angeboten bekommt.
+const WEB_SEARCH_ENABLED = false;
+
 // Startup-Log: Modell + Key-Quelle (niemals den Key selbst loggen!).
 if (!process.env.OPENROUTER_API_KEY) {
   console.warn("[quiz] WARN: OPENROUTER_API_KEY not set — using built-in fallback key. Set the env var in production!");
@@ -67,6 +72,27 @@ export type GenQuiz = {
   questions: GenQuestion[];
 };
 
+const SVG_RULES = `  - Muss mit "<svg" beginnen und mit "</svg>" enden, viewBox setzen (z.B. viewBox="0 0 200 200"), nur Grundformen (rect, circle, ellipse, path, polygon, line, text, g) und Füllfarben.
+  - VERBOTEN: <script>, Event-Attribute (onclick, onload, …), <iframe>/<foreignObject>/<embed>/<object>, externe Bild-/Link-Referenzen (href/xlink:href auf http(s)-URLs).
+  - Einfach halten (wenige Formen, klare Farben) — kein fotorealistischer Anspruch, es ist eine Illustration.`;
+
+// web_search/web_image_search sind über WEB_SEARCH_ENABLED temporär abschaltbar
+// (siehe oben) — der Prompt-Text passt sich entsprechend an, damit das Modell
+// nie auf ein Tool verwiesen wird, das es gar nicht angeboten bekommt.
+const RESEARCH_BLOCK = WEB_SEARCH_ENABLED
+  ? `RECHERCHE IST PFLICHT (Funktionsaufrufe — IMMER verwenden, bevor du das Quiz schreibst):
+- Insgesamt stehen dir nur 2 Recherche-Aufrufe zur Verfügung — plane sie gezielt, nicht mehrfach dasselbe suchen.
+- web_search(query, count): DuckDuckGo-Websuche für Fakten, Zahlen, Schweizer Bezüge (z.B. "Einwohner Zürich 2026"). Genau 1 Aufruf. Gefundene Fakten still verwenden (keine Quellenangaben im Quiz).
+- web_image_search(query, count): Bildersuche, liefert direkte Bild-URLs. Genau 1 Aufruf. Mindestens 1 Frage bekommt ein imageUrl aus den Ergebnissen (gute Motive: Tiere, Orte, Karten, image_hotspot).
+- BILD-REGELN: imageUrl NUR mit einer exakt zurückgegebenen BILD-URL befüllen (direkte .jpg/.png/.webp-URL bevorzugt). NIEMALS Bild-URLs raten, erfinden oder zusammenbauen — kein passendes Bild gefunden → imageUrl weglassen oder leer lassen.
+- imageSvg (ALTERNATIVE zu imageUrl, kein Recherche-Aufruf nötig): Für Diagramme, Icons, Flaggen, geometrische Formen oder einfache Szenen, für die kein Foto sinnvoll ist, kannst du selbst eine Illustration als Inline-SVG zeichnen statt ein Bild zu suchen. Nur EIN Feld von beiden pro Frage setzen (imageUrl ODER imageSvg, nie beides). Regeln fürs SVG:
+${SVG_RULES}`
+  : `BILDER — keine Websuche verfügbar:
+- Du hast KEINEN Zugriff auf Websuche oder Bildersuche. Verlasse dich für Fakten und Zahlen ausschliesslich auf dein Trainingswissen — wenn du dir unsicher bist, wähle ein Thema/eine Frage, die du sicher weisst, statt zu raten.
+- imageUrl NIEMALS befüllen (keine erfundenen/geratenen URLs, da keine Bildersuche zur Verfügung steht).
+- Für Diagramme, Icons, Flaggen, geometrische Formen oder einfache Szenen stattdessen imageSvg setzen (selbst gezeichnete Inline-SVG-Illustration). Regeln fürs SVG:
+${SVG_RULES}`;
+
 const SYSTEM_PROMPT = `Du erstellst Kahoot-Quizze als valides JSON. Antworte NUR mit einem JSON-Objekt (kein Markdown, kein Kommentar).
 
 Sämtliche sichtbaren Texte (Titel, Beschreibung, jeder Fragetext, jede Antwort, jede akzeptierte Eingabe, jede Musterlösung, jede Paar-Seite, jeder Kategorienname, jedes Item, jeder Farbname, jede Einheit) MÜSSEN auf DEUTSCH sein. Keine Mischsprache. Schreibe echte Umlaute (ä, ö, ü) — keine ae/oe/ue-Umschreibung. WICHTIG: Schweizer Rechtschreibung — NIEMALS ß, immer ss (z.B. Strasse, Fussball, gross).
@@ -77,15 +103,7 @@ KONTEXT — unbedingt beachten:
 - Eingesetzt wird das Quiz in einer 6. Klasse (zur Wiederholung und Festigung) — der Schwierigkeitsgrad bleibt trotzdem 4.-Klass-Niveau: lieber zu leicht als zu schwer.
 JSON-Schlüssel, Steuerwerte und "type"-Bezeichner bleiben Englisch.
 
-RECHERCHE IST PFLICHT (Funktionsaufrufe — IMMER verwenden, bevor du das Quiz schreibst):
-- Insgesamt stehen dir nur 2 Recherche-Aufrufe zur Verfügung — plane sie gezielt, nicht mehrfach dasselbe suchen.
-- web_search(query, count): DuckDuckGo-Websuche für Fakten, Zahlen, Schweizer Bezüge (z.B. "Einwohner Zürich 2026"). Genau 1 Aufruf. Gefundene Fakten still verwenden (keine Quellenangaben im Quiz).
-- web_image_search(query, count): Bildersuche, liefert direkte Bild-URLs. Genau 1 Aufruf. Mindestens 1 Frage bekommt ein imageUrl aus den Ergebnissen (gute Motive: Tiere, Orte, Karten, image_hotspot).
-- BILD-REGELN: imageUrl NUR mit einer exakt zurückgegebenen BILD-URL befüllen (direkte .jpg/.png/.webp-URL bevorzugt). NIEMALS Bild-URLs raten, erfinden oder zusammenbauen — kein passendes Bild gefunden → imageUrl weglassen oder leer lassen.
-- imageSvg (ALTERNATIVE zu imageUrl, kein Recherche-Aufruf nötig): Für Diagramme, Icons, Flaggen, geometrische Formen oder einfache Szenen, für die kein Foto sinnvoll ist, kannst du selbst eine Illustration als Inline-SVG zeichnen statt ein Bild zu suchen. Nur EIN Feld von beiden pro Frage setzen (imageUrl ODER imageSvg, nie beides). Regeln fürs SVG:
-  - Muss mit "<svg" beginnen und mit "</svg>" enden, viewBox setzen (z.B. viewBox="0 0 200 200"), nur Grundformen (rect, circle, ellipse, path, polygon, line, text, g) und Füllfarben.
-  - VERBOTEN: <script>, Event-Attribute (onclick, onload, …), <iframe>/<foreignObject>/<embed>/<object>, externe Bild-/Link-Referenzen (href/xlink:href auf http(s)-URLs).
-  - Einfach halten (wenige Formen, klare Farben) — kein fotorealistischer Anspruch, es ist eine Illustration.
+${RESEARCH_BLOCK}
 
 Exakt diese Fragetypen mit exakt diesen Feldern (keine erfundenen Felder!):
 - "quiz": { choices: [genau 4 Strings], correctIndex: 0..3 }
@@ -107,7 +125,7 @@ Exakt diese Fragetypen mit exakt diesen Feldern (keine erfundenen Felder!):
 - "poll": { choices: [2-4 Strings] } (kein correctIndex, keine richtigen/falschen Antworten)
 - "color_match": { colors: [3-4 verschiedene Farben als {hex:"#rrggbb", name:"Farbname auf Deutsch"}], correctName: MUSS exakt einer der Farbnamen aus colors sein }
 - "memory": { memoryLength: 3-5 }
-- "image_hotspot": { imageUrl (echte URL aus web_image_search) ODER imageSvg (selbst gezeichnetes Diagramm/Szene), hotspotX: 0..1, hotspotY: 0..1, hotspotRadius: 0.05..0.2 }
+- "image_hotspot": { ${WEB_SEARCH_ENABLED ? "imageUrl (echte URL aus web_image_search) ODER imageSvg (selbst gezeichnetes Diagramm/Szene)" : "imageSvg (selbst gezeichnetes Diagramm/Szene — keine Bildersuche verfügbar)"}, hotspotX: 0..1, hotspotY: 0..1, hotspotRadius: 0.05..0.2 }
 - "audio_clip": { audioUrl: "" (leer lassen), choices: [genau 4 Strings], correctIndex: 0..3 }
 - "video_clip": { videoUrl: "" (leer lassen), choices: [genau 4 Strings], correctIndex: 0..3 }
 - "brainstorm": keine Extra-Felder
@@ -480,7 +498,7 @@ function buildQuizPrompts(topic: string, wantCount: number, difficulty: "easy" |
   const mixHint = wantCount >= 8
     ? "- 4-5 verschiedene, PASSENDE Typen aus: quiz, true_false, dropdown, multi_select, choose_two, type_answer, fill_blank, open_ended, slider, estimate, order, sequence, fastest_finger, match_pairs, classify, puzzle_drop."
     : `- ${Math.min(3, wantCount)} verschiedene, PASSENDE Typen aus derselben Liste.`;
-  const bannedHint = `- VERBOTEN: reaction, color_match, poll, brainstorm, word_cloud, memory, audio_clip, video_clip. image_hotspot braucht imageUrl ODER imageSvg.
+  const bannedHint = `- VERBOTEN: reaction, color_match, poll, brainstorm, word_cloud, memory, audio_clip, video_clip. image_hotspot braucht ${WEB_SEARCH_ENABLED ? "imageUrl ODER imageSvg" : "imageSvg (keine Bildersuche verfügbar)"}.
 - Kein Typ ohne Sinn zum Thema (kein slider ohne Zahl, kein match ohne Paare).`;
   const userPrompt = `Thema: ${topic}
 Anzahl Fragen: GENAU ${wantCount} (nicht mehr, nicht weniger)
@@ -493,7 +511,7 @@ ${bannedHint}
 - Für "type_answer"/"fill_blank" gib nur echte, existierende Wörter/Namen an (2-3 Varianten).
 - Für "open_ended" IMMER eine referenceAnswer (Musterlösung) setzen.
 - Für "slider"/"estimate" muss sliderCorrect zwischen min und max liegen.
-- Keine URLs erfinden. imageUrl nur aus web_image_search — oder alternativ imageSvg (selbst gezeichnet), sonst beide weglassen.
+- Keine URLs erfinden. ${WEB_SEARCH_ENABLED ? "imageUrl nur aus web_image_search — oder alternativ imageSvg (selbst gezeichnet), sonst beide weglassen." : "imageUrl NICHT setzen (keine Bildersuche verfügbar) — für Bilder stattdessen imageSvg (selbst gezeichnet) verwenden, sonst beide weglassen."}
 - Prüfe vor dem Antworten jede Frage: Zeigt correctIndex/correctIndices wirklich auf die richtige Antwort? Gibt es bei Auswahlfragen mindestens eine korrekte Option?
 - NIEMALS Rückfragen oder Erklärungen — antworte IMMER nur mit dem JSON-Objekt. Bei Unklarheit triff eine sinnvolle Annahme. Die genaue Fragenanzahl hat immer Vorrang.
 
@@ -613,11 +631,12 @@ export async function generateQuizStream(
 
   const streamOnce = async (messages: ORMessage[], attempt: number, reasoning: "think" | "direct" = "think"): Promise<string> => {
     if (opts?.signal?.aborted) throw new Error("Aborted by client.");
-    // Tools nur im Think-Modus (Repair/Direct sollen sofort JSON liefern).
+    // Tools nur im Think-Modus (Repair/Direct sollen sofort JSON liefern) UND
+    // nur wenn WEB_SEARCH_ENABLED (oben) an ist.
     // 2 statt 3 Runden: jede Runde kostet ~10-25s Modell-Latenz — mit 2 Runden
     // bleibt die Pflicht-Recherche (1x Text, 1x Bild) drin, aber ohne die dritte,
     // meist nur noch "nice to have"-Runde, die die Generierung spürbar verlangsamt.
-    const useTools = reasoning === "think";
+    const useTools = WEB_SEARCH_ENABLED && reasoning === "think";
     const MAX_TOOL_ROUNDS = 2;
     const msgs: any[] = [...messages];
     const t0 = Date.now();
