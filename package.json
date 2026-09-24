@@ -1,0 +1,14 @@
+{
+  "name": "kahootclone",
+  "version": "1.0.0",
+  "license": "AGPL-3.0-only",
+  "module": "server/index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --hot server/index.ts",
+    "start": "bun server/index.ts"
+  },
+  "dependencies": {
+    "openai": "^7.17.0"
+  }
+}
