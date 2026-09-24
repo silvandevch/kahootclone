@@ -25,6 +25,7 @@ export function createRoom(quiz: Quiz, pin: string): RoomState {
     reactionGoAt: 0,
     memorySeq: [],
     answeredCount: 0,
+    guestCounter: 0,
   };
 }
 
@@ -383,6 +384,72 @@ export function safeName(raw: string): string {
     .trim()
     .slice(0, 18);
   return cleaned.length > 0 ? cleaned : "Player";
+}
+
+// Easter Egg: Der Entwickler joint exakt mit "EntwicklerSil" und wird
+// automatisch zu "Entwickler" umbenannt.
+const DEV_JOIN_NAME = "EntwicklerSil";
+const DEV_DISPLAY_NAME = "Entwickler";
+
+export function isDeveloperJoinName(raw: string): boolean {
+  return raw.trim() === DEV_JOIN_NAME;
+}
+
+export function developerDisplayName(): string {
+  return DEV_DISPLAY_NAME;
+}
+
+// Erkennt geschützte Begriffe (Entwickler, Designer, Erfinder, ...) auch mit
+// gängigen Leetspeak-/Trenn-/Umlaut-Varianten (z.B. "3ntw1ckl3r",
+// "Entw-ickler", "ENTWICKLER123", "Schoepfer"), damit sich niemand als
+// Ersteller des Spiels ausgeben kann.
+const LEET_MAP: Record<string, string> = {
+  "0": "o",
+  "1": "i",
+  "!": "i",
+  "3": "e",
+  "4": "a",
+  "@": "a",
+  "5": "s",
+  "$": "s",
+  "7": "t",
+  "+": "t",
+  "ä": "a",
+  "ö": "o",
+  "ü": "u",
+  "ß": "s",
+};
+
+function normalizeForImpersonationCheck(raw: string): string {
+  const lower = raw.toLowerCase();
+  let mapped = "";
+  for (const ch of lower) mapped += LEET_MAP[ch] ?? ch;
+  return mapped.replace(/[^a-z]/g, "");
+}
+
+// Weibliche Formen (z.B. "Designerin", "Erfinderin") enthalten die männliche
+// Form als Teilstring, deshalb reichen die Grundformen hier aus.
+const RESTRICTED_IDENTITY_TERMS = [
+  "entwickler",
+  "developer",
+  "designer",
+  "entwerfer",
+  "erfinder",
+  "schopfer", // "Schöpfer" nach ö→o-Normalisierung
+  "schoepfer", // falls bereits als "oe" geschrieben
+  "erschaffer",
+  "ersteller",
+];
+
+export function looksLikeDeveloperImpersonation(raw: string): boolean {
+  if (isDeveloperJoinName(raw)) return false;
+  const normalized = normalizeForImpersonationCheck(raw);
+  return RESTRICTED_IDENTITY_TERMS.some((term) => normalized.includes(term));
+}
+
+export function nextGuestName(room: RoomState): string {
+  room.guestCounter += 1;
+  return `User${room.guestCounter}`;
 }
 
 // Begrenzt Spieler-Antworten auf sinnvolle Größen, bevor sie gespeichert,

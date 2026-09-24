@@ -7,9 +7,13 @@ import {
   clampAnswer,
   clearAutoReveal,
   createRoom,
+  developerDisplayName,
+  isDeveloperJoinName,
   leaderboard,
+  looksLikeDeveloperImpersonation,
   makePin,
   newId,
+  nextGuestName,
   publicRoomSnapshot,
   safeName,
   scoreAnswer,
@@ -227,7 +231,7 @@ setInterval(() => {
 function sendLobbyUpdate(room: RoomState) {
   broadcast(room, {
     type: "lobby:update",
-    players: Array.from(room.players.values()).map((p) => ({ id: p.id, name: p.name, locked: !!p.nameLocked })),
+    players: Array.from(room.players.values()).map((p) => ({ id: p.id, name: p.name, locked: !!p.nameLocked, renamePending: !!p.renamePending })),
     snapshot: publicRoomSnapshot(room),
   });
 }
@@ -398,6 +402,23 @@ function autoReveal(room: RoomState) {
   revealQuestion(room);
 }
 
+// Prüft einen gewünschten Namen auf die "Entwickler"-Easter-Egg-Regel.
+// Rückgabe: der zu verwendende Name + ob der Spieler weiter umbenennen muss.
+// Bei einer geblockten Nachahmung wird `null` zurückgegeben (Wunsch abgelehnt).
+function resolveGuardedName(room: RoomState, raw: string): { name: string; renamePending: boolean } | null {
+  if (isDeveloperJoinName(raw)) return { name: developerDisplayName(), renamePending: false };
+  if (looksLikeDeveloperImpersonation(raw)) return null;
+  return { name: safeName(raw), renamePending: false };
+}
+
+function sendRenameRequired(ws: ServerWebSocket<WSData>, name: string) {
+  send(ws, {
+    type: "rename:required",
+    name,
+    message: "Dieser Name ist nicht erlaubt. Bitte wähle einen anderen Namen.",
+  });
+}
+
 function handlePlayerRename(ws: ServerWebSocket<WSData>, evt: Extract<WSEvent, { type: "player:rename" }>) {
   const room = rooms.get(evt.pin);
   if (!room) return;
@@ -407,10 +428,19 @@ function handlePlayerRename(ws: ServerWebSocket<WSData>, evt: Extract<WSEvent, {
     send(ws, { type: "error", message: "Dein Name wurde vom Host festgelegt." });
     return;
   }
-  const next = safeName(evt.name ?? "");
-  if (!next || next === p.name) return;
+  const raw = evt.name ?? "";
+  const resolved = resolveGuardedName(room, raw);
+  if (!resolved) {
+    // Weiterhin gesperrt: Platzhalter bleibt, bis ein erlaubter Name kommt.
+    if (!p.renamePending) { p.name = nextGuestName(room); p.renamePending = true; sendLobbyUpdate(room); queueHostSnapshot(room); }
+    sendRenameRequired(ws, p.name);
+    return;
+  }
+  const next = resolved.name;
+  if (!next || (next === p.name && p.renamePending === resolved.renamePending)) return;
   log("debug", "player renamed", { pin: evt.pin, from: p.name, to: next });
   p.name = next;
+  p.renamePending = resolved.renamePending;
   sendLobbyUpdate(room);
   queueHostSnapshot(room);
 }
@@ -433,17 +463,26 @@ function handlePlayerJoin(ws: ServerWebSocket<WSData>, evt: Extract<WSEvent, { t
     ws.close();
     return;
   }
+  let renamePendingOnJoin = false;
   if (existing) { existing.connected = true; disconnectedSince.delete(id); }
-  else room.players.set(id, {
-    id,
-    name: safeName(evt.name),
-    score: 0,
-    correctCount: 0,
-    streak: 0,
-    connected: true,
-  });
+  else {
+    const raw = evt.name ?? "";
+    const resolved = resolveGuardedName(room, raw);
+    const name = resolved ? resolved.name : nextGuestName(room);
+    renamePendingOnJoin = resolved ? resolved.renamePending : true;
+    room.players.set(id, {
+      id,
+      name,
+      renamePending: renamePendingOnJoin,
+      score: 0,
+      correctCount: 0,
+      streak: 0,
+      connected: true,
+    });
+  }
   send(ws, { type: "joined", playerId: id, pin: evt.pin });
-  log("debug", "player joined", { pin: evt.pin, name: safeName(evt.name ?? ""), players: room.players.size });
+  log("debug", "player joined", { pin: evt.pin, name: room.players.get(id)?.name ?? "", players: room.players.size });
+  if (renamePendingOnJoin) sendRenameRequired(ws, room.players.get(id)!.name);
   // Lobby-Liste: bei Join-Stürmen (ganze Klasse auf einmal) trailing-debounced
   // (max 1 Broadcast/500ms) statt O(P²); kleine Räume bleiben instant.
   const pendingLobby = lobbyTimers.get(evt.pin);

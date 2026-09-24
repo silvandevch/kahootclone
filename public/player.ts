@@ -21,6 +21,8 @@ const params = new URLSearchParams(location.search);
 let pin = params.get("pin") ?? "";
 let name = params.get("name") ?? "";
 let nameLocked = false;
+let renameRequired = false;
+let renameMessage = "";
 let playerId: string | null = null;
 let ws: WebSocket | null = null;
 let phase: string = "idle";
@@ -210,9 +212,17 @@ function handle(msg: any) {
         // Host kann den Namen festlegen + sperren — dann ist Umbenennen aus.
         if (typeof me.name === "string" && me.name && me.name !== name) name = me.name;
         nameLocked = me.locked === true;
+        if (me.renamePending !== true) { renameRequired = false; renameMessage = ""; }
       }
       render({ type: "lobby", players: msg.players.length });
     }
+    return;
+  }
+  if (msg.type === "rename:required") {
+    if (typeof msg.name === "string" && msg.name) name = msg.name;
+    renameRequired = true;
+    renameMessage = msg.message || "Dieser Name ist nicht erlaubt. Bitte wähle einen anderen Namen.";
+    if (phase === "idle" || phase === "lobby") render({ type: "lobby", players: currentView?.players });
     return;
   }
   if (msg.type === "question:show") {
@@ -346,18 +356,26 @@ function render(view: any) {
     return;
   }
   if (view.type === "lobby") {
-    const nameInput = el("input", { value: name, placeholder: "Dein Name", maxlength: "18", style: "max-width:220px; text-align:center" }) as HTMLInputElement;
-    const renameBtn = el("button", { className: "ghost small", text: "Namen ändern" });
+    const nameInput = el("input", { value: renameRequired ? "" : name, placeholder: "Dein Name", maxlength: "18", style: "max-width:220px; text-align:center" }) as HTMLInputElement;
+    const renameBtn = el("button", { className: renameRequired ? "small" : "ghost small", text: renameRequired ? "Namen bestätigen" : "Namen ändern" });
     const doRename = () => {
       if (nameLocked) return;
       const next = nameInput.value.trim().slice(0, 18);
-      if (!next || next === name) return;
-      name = next;
+      if (!next || (!renameRequired && next === name)) return;
       try { ws?.send(JSON.stringify({ type: "player:rename", pin, name: next })); } catch { /* reconnect sends join with new name */ }
-      render({ type: "lobby", players: view.players });
+      if (!renameRequired) { name = next; render({ type: "lobby", players: view.players }); }
     };
     on(renameBtn, "click", doRename);
     on(nameInput, "keydown", (e: KeyboardEvent) => { if (e.key === "Enter") doRename(); });
+    if (renameRequired) {
+      root.append(el("div", { className: "card center col" }, [
+        el("h2", { text: "⚠ Name nicht erlaubt" }),
+        el("p", { className: "muted", text: renameMessage }),
+        el("p", { className: "small", text: `Aktueller Platzhalter: ${name}` }),
+        el("div", { className: "row center", style: "gap:0.5rem; margin-top:0.5rem" }, [nameInput, renameBtn]),
+      ]));
+      return;
+    }
     const nameRow = nameLocked
       ? el("p", { className: "muted small", text: "🔒 Name vom Host festgelegt" })
       : el("div", { className: "row center", style: "gap:0.5rem; margin-top:0.5rem" }, [nameInput, renameBtn]);
