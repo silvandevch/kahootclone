@@ -399,9 +399,10 @@ export function developerDisplayName(): string {
   return DEV_DISPLAY_NAME;
 }
 
-// Erkennt "entwickler" auch mit gängigen Leetspeak-/Trenn-Varianten
-// (z.B. "3ntw1ckl3r", "Entw-ickler", "ENTWICKLER123"), damit sich niemand
-// als der Entwickler ausgeben kann.
+// Erkennt geschützte Begriffe (Entwickler, Designer, Erfinder, ...) auch mit
+// gängigen Leetspeak-/Trenn-/Umlaut-Varianten (z.B. "3ntw1ckl3r",
+// "Entw-ickler", "ENTWICKLER123", "Schoepfer"), damit sich niemand als
+// Ersteller des Spiels ausgeben kann.
 const LEET_MAP: Record<string, string> = {
   "0": "o",
   "1": "i",
@@ -413,6 +414,10 @@ const LEET_MAP: Record<string, string> = {
   "$": "s",
   "7": "t",
   "+": "t",
+  "ä": "a",
+  "ö": "o",
+  "ü": "u",
+  "ß": "s",
 };
 
 function normalizeForImpersonationCheck(raw: string): string {
@@ -422,9 +427,24 @@ function normalizeForImpersonationCheck(raw: string): string {
   return mapped.replace(/[^a-z]/g, "");
 }
 
+// Weibliche Formen (z.B. "Designerin", "Erfinderin") enthalten die männliche
+// Form als Teilstring, deshalb reichen die Grundformen hier aus.
+const RESTRICTED_IDENTITY_TERMS = [
+  "entwickler",
+  "developer",
+  "designer",
+  "entwerfer",
+  "erfinder",
+  "schopfer", // "Schöpfer" nach ö→o-Normalisierung
+  "schoepfer", // falls bereits als "oe" geschrieben
+  "erschaffer",
+  "ersteller",
+];
+
 export function looksLikeDeveloperImpersonation(raw: string): boolean {
   if (isDeveloperJoinName(raw)) return false;
-  return normalizeForImpersonationCheck(raw).includes("entwickler");
+  const normalized = normalizeForImpersonationCheck(raw);
+  return RESTRICTED_IDENTITY_TERMS.some((term) => normalized.includes(term));
 }
 
 export function nextGuestName(room: RoomState): string {
