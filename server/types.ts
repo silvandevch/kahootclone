@@ -122,6 +122,9 @@ export type Player = {
   name: string;
   // Vom Host festgelegter Name: Spieler darf ihn nicht mehr selbst ändern.
   nameLocked?: boolean;
+  // Name enthält "entwickler" o.ä. und wurde durch einen Platzhalter ersetzt —
+  // Spieler muss sich umbenennen, bevor der Name wieder frei wählbar ist.
+  renamePending?: boolean;
   score: number;
   correctCount: number;
   streak: number;
@@ -151,4 +154,6 @@ export type RoomState = {
   // Laufender Zähler beantworteter Spieler der aktuellen Frage (O(1) statt
   // Array.from(...).filter(...) pro Antwort).
   answeredCount: number;
+  // Zähler für Platzhalternamen ("User1", "User2", ...) bei gesperrten Namen.
+  guestCounter: number;
 };
