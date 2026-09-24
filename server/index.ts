@@ -5,6 +5,7 @@ import {
   aggregateStats,
   choiceCounts,
   clampAnswer,
+  allRanks,
   clearAutoReveal,
   createRoom,
   developerDisplayName,
@@ -280,7 +281,9 @@ function fullHostSnapshot(room: ReturnType<typeof createRoom>) {
     buzzedPlayerId: room.buzzedPlayerId,
     reactionGoAt: room.reactionGoAt,
     answeredCount: room.answeredCount,
-    players: Array.from(room.players.values()).map((p) => ({
+    // Beim Reveal nach Rang sortiert (höchste Punktzahl zuerst), damit der
+    // Host sofort sieht, wer vorne liegt; in Lobby/Frage bleibt Beitrittsreihenfolge.
+    players: (detail ? Array.from(room.players.values()).sort((a, b) => b.score - a.score) : Array.from(room.players.values())).map((p) => ({
       id: p.id,
       name: p.name,
       score: p.score,
@@ -395,6 +398,7 @@ function revealPayload(room: RoomState) {
     answers: agg.answers,
     answered,
     total: room.players.size,
+    ranks: allRanks(room.players),
   };
 }
 

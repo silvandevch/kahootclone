@@ -326,6 +326,25 @@ export function choiceCounts(room: RoomState, questionIndex: number): number[] {
   return counts;
 }
 
+// Platzierung aller Spieler (Standard-Ranking: gleicher Punktestand = gleicher
+// Platz, nächster Platz überspringt entsprechend, z.B. 1,2,2,4). Wird beim
+// Reveal an alle geschickt, damit jeder Spieler seinen aktuellen Platz sieht.
+export function allRanks(players: Map<string, Player>): Array<{ rank: number; id: string; name: string; score: number }> {
+  const arr = Array.from(players.values());
+  arr.sort((a, b) => b.score - a.score);
+  const out = new Array(arr.length);
+  let rank = 0;
+  let prevScore: number | null = null;
+  for (let i = 0; i < arr.length; i++) {
+    if (prevScore === null || arr[i].score !== prevScore) {
+      rank = i + 1;
+      prevScore = arr[i].score;
+    }
+    out[i] = { rank, id: arr[i].id, name: arr[i].name, score: arr[i].score };
+  }
+  return out;
+}
+
 export function leaderboard(players: Map<string, Player>, limit = 5): Array<{ rank: number; id: string; name: string; score: number }> {
   const arr = Array.from(players.values());
   arr.sort((a, b) => b.score - a.score);
