@@ -432,6 +432,10 @@ function render(view: any) {
       ]);
       root.append(banner);
     }
+    const myRank = Array.isArray(data.ranks) ? data.ranks.find((row: any) => row.id === playerId) : null;
+    if (myRank) {
+      root.append(el("p", { className: "muted small center", text: `Platz ${myRank.rank} von ${data.ranks.length}` }));
+    }
     renderRevealBody(data);
     return;
   }
