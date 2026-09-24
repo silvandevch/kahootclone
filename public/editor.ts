@@ -393,19 +393,32 @@ function render() {
     on(textIn, "input", () => { q.text = textIn.value; });
     qEl.append(textIn);
 
-    if (q.type === "audio_clip" || q.type === "video_clip" || q.type === "image_hotspot" || q.type === "color_match") {
+    if (q.type === "audio_clip" || q.type === "video_clip") {
       const mediaRow = el("div", { className: "row" });
-      const mediaIn = el("input", { value: (q as any)[q.type === "audio_clip" ? "audioUrl" : q.type === "video_clip" ? "videoUrl" : "imageUrl"] ?? "", placeholder: q.type === "color_match" ? "(Standardfarben)" : "URL" }) as HTMLInputElement;
+      const mediaIn = el("input", { value: (q as any)[q.type === "audio_clip" ? "audioUrl" : "videoUrl"] ?? "", placeholder: "URL" }) as HTMLInputElement;
       on(mediaIn, "input", () => {
         if (q.type === "audio_clip") q.audioUrl = mediaIn.value;
-        else if (q.type === "video_clip") q.videoUrl = mediaIn.value;
-        else q.imageUrl = mediaIn.value;
+        else q.videoUrl = mediaIn.value;
       });
       mediaRow.append(el("label", { className: "col", style: "flex:1" }, [
-        el("span", { className: "small muted", text: q.type === "audio_clip" ? "Audio URL" : q.type === "video_clip" ? "Video URL" : "Bild URL" }),
+        el("span", { className: "small muted", text: q.type === "audio_clip" ? "Audio URL" : "Video URL" }),
         mediaIn,
       ]));
       qEl.append(mediaRow);
+    }
+
+    // Bild-URL: für jeden Fragetyp außer color_match (dort ersetzen die
+    // Farbkacheln das Bild) — vorher gab es dieses Feld nur für 4 Spezialtypen,
+    // obwohl Server/Host/Player q.imageUrl bei ALLEN Typen anzeigen.
+    if (q.type !== "color_match") {
+      const imgRow = el("div", { className: "row" });
+      const imgIn = el("input", { value: q.imageUrl ?? "", placeholder: "https://..." }) as HTMLInputElement;
+      on(imgIn, "input", () => { q.imageUrl = imgIn.value; });
+      imgRow.append(el("label", { className: "col", style: "flex:1" }, [
+        el("span", { className: "small muted", text: q.type === "image_hotspot" ? "Bild URL" : "Bild URL (optional)" }),
+        imgIn,
+      ]));
+      qEl.append(imgRow);
     }
 
     const metaRow = el("div", { className: "row" });

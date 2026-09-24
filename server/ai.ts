@@ -78,9 +78,14 @@ KONTEXT — unbedingt beachten:
 JSON-Schlüssel, Steuerwerte und "type"-Bezeichner bleiben Englisch.
 
 RECHERCHE IST PFLICHT (Funktionsaufrufe — IMMER verwenden, bevor du das Quiz schreibst):
-- web_search(query, count): DuckDuckGo-Websuche für Fakten, Zahlen, Schweizer Bezüge (z.B. "Einwohner Zürich 2026"). Mindestens 1 Aufruf pro Quiz (Fakten prüfen!), max 3. Gefundene Fakten still verwenden (keine Quellenangaben im Quiz).
-- web_image_search(query, count): Bildersuche, liefert direkte Bild-URLs. Mindestens 1 Aufruf pro Quiz, max 3 Aufrufe. Mindestens 1 Frage bekommt ein imageUrl aus den Ergebnissen (gute Motive: Tiere, Orte, Karten, image_hotspot).
+- Insgesamt stehen dir nur 2 Recherche-Aufrufe zur Verfügung — plane sie gezielt, nicht mehrfach dasselbe suchen.
+- web_search(query, count): DuckDuckGo-Websuche für Fakten, Zahlen, Schweizer Bezüge (z.B. "Einwohner Zürich 2026"). Genau 1 Aufruf. Gefundene Fakten still verwenden (keine Quellenangaben im Quiz).
+- web_image_search(query, count): Bildersuche, liefert direkte Bild-URLs. Genau 1 Aufruf. Mindestens 1 Frage bekommt ein imageUrl aus den Ergebnissen (gute Motive: Tiere, Orte, Karten, image_hotspot).
 - BILD-REGELN: imageUrl NUR mit einer exakt zurückgegebenen BILD-URL befüllen (direkte .jpg/.png/.webp-URL bevorzugt). NIEMALS Bild-URLs raten, erfinden oder zusammenbauen — kein passendes Bild gefunden → imageUrl weglassen oder leer lassen.
+- imageSvg (ALTERNATIVE zu imageUrl, kein Recherche-Aufruf nötig): Für Diagramme, Icons, Flaggen, geometrische Formen oder einfache Szenen, für die kein Foto sinnvoll ist, kannst du selbst eine Illustration als Inline-SVG zeichnen statt ein Bild zu suchen. Nur EIN Feld von beiden pro Frage setzen (imageUrl ODER imageSvg, nie beides). Regeln fürs SVG:
+  - Muss mit "<svg" beginnen und mit "</svg>" enden, viewBox setzen (z.B. viewBox="0 0 200 200"), nur Grundformen (rect, circle, ellipse, path, polygon, line, text, g) und Füllfarben.
+  - VERBOTEN: <script>, Event-Attribute (onclick, onload, …), <iframe>/<foreignObject>/<embed>/<object>, externe Bild-/Link-Referenzen (href/xlink:href auf http(s)-URLs).
+  - Einfach halten (wenige Formen, klare Farben) — kein fotorealistischer Anspruch, es ist eine Illustration.
 
 Exakt diese Fragetypen mit exakt diesen Feldern (keine erfundenen Felder!):
 - "quiz": { choices: [genau 4 Strings], correctIndex: 0..3 }
@@ -102,7 +107,7 @@ Exakt diese Fragetypen mit exakt diesen Feldern (keine erfundenen Felder!):
 - "poll": { choices: [2-4 Strings] } (kein correctIndex, keine richtigen/falschen Antworten)
 - "color_match": { colors: [3-4 verschiedene Farben als {hex:"#rrggbb", name:"Farbname auf Deutsch"}], correctName: MUSS exakt einer der Farbnamen aus colors sein }
 - "memory": { memoryLength: 3-5 }
-- "image_hotspot": { imageUrl: "" (leer lassen, ODER echte URL aus web_image_search), hotspotX: 0..1, hotspotY: 0..1, hotspotRadius: 0.05..0.2 }
+- "image_hotspot": { imageUrl (echte URL aus web_image_search) ODER imageSvg (selbst gezeichnetes Diagramm/Szene), hotspotX: 0..1, hotspotY: 0..1, hotspotRadius: 0.05..0.2 }
 - "audio_clip": { audioUrl: "" (leer lassen), choices: [genau 4 Strings], correctIndex: 0..3 }
 - "video_clip": { videoUrl: "" (leer lassen), choices: [genau 4 Strings], correctIndex: 0..3 }
 - "brainstorm": keine Extra-Felder
@@ -193,6 +198,30 @@ function nonEmptyStrings(arr: unknown, min: number, max: number): arr is string[
   return arr.every((s) => typeof s === "string" && s.trim().length > 0);
 }
 
+// Wandelt eine vom Modell selbst gezeichnete Inline-SVG-Illustration in eine
+// data:-URI für imageUrl um. Lehnt alles ab, was nicht wie ein einfaches,
+// ungefährliches Vektorbild aussieht — <img>/CSS-background sandboxen SVG
+// zwar ohnehin (kein Script-Zugriff), aber verteidigt trotzdem in der Tiefe:
+// keine Scripts, Event-Attribute oder externen Referenzen im gespeicherten Quiz.
+const MAX_SVG_LENGTH = 20000;
+function svgToDataUrl(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const svg = raw.trim();
+  if (!svg || svg.length > MAX_SVG_LENGTH) return null;
+  if (!/^<svg[\s>]/i.test(svg) || !/<\/svg>\s*$/i.test(svg)) return null;
+  const lower = svg.toLowerCase();
+  if (/<script[\s>]/.test(lower)) return null;
+  if (/\son\w+\s*=/.test(lower)) return null; // onload=, onclick=, ...
+  if (/javascript:/.test(lower)) return null;
+  if (/<(iframe|foreignobject|embed|object)[\s>]/.test(lower)) return null;
+  if (/\b(?:href|xlink:href)\s*=\s*["']https?:/.test(lower)) return null; // keine externen Referenzen
+  // Base64 statt URL-Encoding: imageUrl landet clientseitig auch in
+  // UNQUOTED CSS background:url(...) — encodeURIComponent lässt "(" und ")"
+  // unescaped, was dort das SVG (z.B. rgb(...), rotate(...), url(#id)) mitten
+  // im Wert abschneiden würde. Base64 enthält keine CSS-/HTML-Sonderzeichen.
+  return `data:image/svg+xml;base64,${Buffer.from(svg, "utf-8").toString("base64")}`;
+}
+
 // Validates one generated question. Repairs what's safely repairable
 // (clamping ranges, defaulting correctName), drops what's broken.
 // Returns null if the question must be discarded.
@@ -200,13 +229,22 @@ function sanitizeQuestion(raw: any): GenQuestion | null {
   if (!raw || typeof raw !== "object" || !VALID_TYPES.has(raw.type)) return null;
   if (typeof raw.text !== "string" || raw.text.trim().length === 0) return null;
   const q: GenQuestion = { ...raw, text: raw.text.trim() };
-  // URL-Felder: nur echte http(s)-URLs behalten (Schutz vor erfundenen Links —
-  // das Modell darf nur Tool-erzeugte Bild-URLs verwenden).
+  // Inline-SVG-Illustration statt einer Foto-URL: sanitizen und als data:-URI
+  // in imageUrl umwandeln (nur wenn noch keine imageUrl gesetzt ist).
+  if (!(q as any).imageUrl) {
+    const svgUrl = svgToDataUrl((raw as any).imageSvg);
+    if (svgUrl) (q as any).imageUrl = svgUrl;
+  }
+  delete (q as any).imageSvg;
+  // URL-Felder: nur echte http(s)-URLs oder ein sanitizter SVG-data:-URI
+  // behalten (Schutz vor erfundenen Links — das Modell darf nur
+  // Tool-erzeugte Bild-URLs oder selbst gezeichnete SVGs verwenden).
   for (const k of ["imageUrl", "audioUrl", "videoUrl"] as const) {
     const v = (q as any)[k];
-    if (typeof v !== "string" || !/^https?:\/\/\S+\.\S+/.test(v.trim())) {
+    const isSvgData = k === "imageUrl" && typeof v === "string" && v.startsWith("data:image/svg+xml;base64,");
+    if (typeof v !== "string" || (!isSvgData && !/^https?:\/\/\S+\.\S+/.test(v.trim()))) {
       delete (q as any)[k];
-    } else {
+    } else if (!isSvgData) {
       (q as any)[k] = v.trim();
     }
   }
@@ -363,7 +401,7 @@ function sanitizeQuiz(parsed: GenQuiz, wantCount: number): { quiz: GenQuiz; drop
       }
       if (raw.type === "image_hotspot") {
         const u = typeof raw.imageUrl === "string" ? raw.imageUrl.trim() : "";
-        if (!/^https?:\/\/\S+\.\S+/.test(u)) {
+        if (!/^https?:\/\/\S+\.\S+/.test(u) && !svgToDataUrl(raw.imageSvg)) {
           dropped++;
           continue;
         }
@@ -442,8 +480,8 @@ function buildQuizPrompts(topic: string, wantCount: number, difficulty: "easy" |
   const mixHint = wantCount >= 8
     ? "- 4-5 verschiedene, PASSENDE Typen aus: quiz, true_false, dropdown, multi_select, choose_two, type_answer, fill_blank, open_ended, slider, estimate, order, sequence, fastest_finger, match_pairs, classify, puzzle_drop."
     : `- ${Math.min(3, wantCount)} verschiedene, PASSENDE Typen aus derselben Liste.`;
-  const bannedHint = `- VERBOTEN: reaction, color_match, poll, brainstorm, word_cloud, memory, audio_clip, video_clip. image_hotspot nur mit echter Bild-URL.
-- Kein Typ ohne Sinn zum Thema (kein slider ohne Zahl, kein match ohne Paare).`; 
+  const bannedHint = `- VERBOTEN: reaction, color_match, poll, brainstorm, word_cloud, memory, audio_clip, video_clip. image_hotspot braucht imageUrl ODER imageSvg.
+- Kein Typ ohne Sinn zum Thema (kein slider ohne Zahl, kein match ohne Paare).`;
   const userPrompt = `Thema: ${topic}
 Anzahl Fragen: GENAU ${wantCount} (nicht mehr, nicht weniger)
 ${DIFFICULTY_HINT[difficulty] ?? DIFFICULTY_HINT.medium}
@@ -455,7 +493,7 @@ ${bannedHint}
 - Für "type_answer"/"fill_blank" gib nur echte, existierende Wörter/Namen an (2-3 Varianten).
 - Für "open_ended" IMMER eine referenceAnswer (Musterlösung) setzen.
 - Für "slider"/"estimate" muss sliderCorrect zwischen min und max liegen.
-- Keine URLs erfinden. imageUrl nur aus web_image_search, sonst weglassen.
+- Keine URLs erfinden. imageUrl nur aus web_image_search — oder alternativ imageSvg (selbst gezeichnet), sonst beide weglassen.
 - Prüfe vor dem Antworten jede Frage: Zeigt correctIndex/correctIndices wirklich auf die richtige Antwort? Gibt es bei Auswahlfragen mindestens eine korrekte Option?
 - NIEMALS Rückfragen oder Erklärungen — antworte IMMER nur mit dem JSON-Objekt. Bei Unklarheit triff eine sinnvolle Annahme. Die genaue Fragenanzahl hat immer Vorrang.
 
@@ -502,7 +540,7 @@ const QUIZ_TOOLS: any[] = [
     type: "function",
     function: {
       name: "web_search",
-      description: "Durchsucht das Web (DuckDuckGo) nach Fakten: aktuelle Zahlen, Schweizer Bezüge, Details die du nicht sicher weisst. Max 3 Aufrufe pro Quiz.",
+      description: "Durchsucht das Web (DuckDuckGo) nach Fakten: aktuelle Zahlen, Schweizer Bezüge, Details die du nicht sicher weisst. Genau 1 Aufruf pro Quiz (insgesamt nur 2 Recherche-Aufrufe verfügbar).",
       parameters: {
         type: "object",
         properties: {
@@ -517,7 +555,7 @@ const QUIZ_TOOLS: any[] = [
     type: "function",
     function: {
       name: "web_image_search",
-      description: "Sucht Bilder im Web (DuckDuckGo/Wikimedia). Gibt direkte Bild-URLs zurück für imageUrl-Felder. Max 3 Aufrufe, max 4 Bilder pro Quiz. Nur bei Motiven die ein Bild aufwerten (Tiere, Orte, Karten, image_hotspot).",
+      description: "Sucht Bilder im Web (DuckDuckGo/Wikimedia/Wikipedia). Gibt direkte Bild-URLs zurück für imageUrl-Felder. Genau 1 Aufruf, max 4 Bilder (insgesamt nur 2 Recherche-Aufrufe verfügbar). Nur bei Motiven die ein Bild aufwerten (Tiere, Orte, Karten, image_hotspot).",
       parameters: {
         type: "object",
         properties: {
@@ -576,8 +614,11 @@ export async function generateQuizStream(
   const streamOnce = async (messages: ORMessage[], attempt: number, reasoning: "think" | "direct" = "think"): Promise<string> => {
     if (opts?.signal?.aborted) throw new Error("Aborted by client.");
     // Tools nur im Think-Modus (Repair/Direct sollen sofort JSON liefern).
+    // 2 statt 3 Runden: jede Runde kostet ~10-25s Modell-Latenz — mit 2 Runden
+    // bleibt die Pflicht-Recherche (1x Text, 1x Bild) drin, aber ohne die dritte,
+    // meist nur noch "nice to have"-Runde, die die Generierung spürbar verlangsamt.
     const useTools = reasoning === "think";
-    const MAX_TOOL_ROUNDS = 3;
+    const MAX_TOOL_ROUNDS = 2;
     const msgs: any[] = [...messages];
     const t0 = Date.now();
     // Watchdog: Falls der Provider das Reasoning-Limit ignoriert und endlos
@@ -597,10 +638,16 @@ export async function generateQuizStream(
       const onClientAbort = () => localAc.abort();
       opts?.signal?.addEventListener("abort", onClientAbort, { once: true });
       const toolsOn = useTools && toolRound < MAX_TOOL_ROUNDS;
-      qlog(`stream attempt ${attempt}${useTools ? ` tool-round ${toolRound}` : ""}: requesting model=${OPENROUTER_MODEL} (${msgs.length} messages, reasoning=${reasoning}, tools=${toolsOn ? "on" : "off"})…`);
+      // Sind die Tool-Runden aufgebraucht (Recherche fertig), muss das Modell JETZT
+      // antworten — weiteres Reasoning bringt nichts mehr, kostet aber oft 20s+ für
+      // fast keinen Content (beobachtet: 25s Denken → 49 Zeichen Output). Also wie
+      // beim Repair: Reasoning aus, response_format erzwingt sofortiges JSON.
+      const toolsExhausted = useTools && !toolsOn;
+      const effectiveReasoning: "think" | "direct" = toolsExhausted ? "direct" : reasoning;
+      qlog(`stream attempt ${attempt}${useTools ? ` tool-round ${toolRound}` : ""}: requesting model=${OPENROUTER_MODEL} (${msgs.length} messages, reasoning=${effectiveReasoning}, tools=${toolsOn ? "on" : "off"})…`);
       let stream;
       try {
-        const params: any = { ...quizParams(msgs, 0.7, reasoning), stream: true };
+        const params: any = { ...quizParams(msgs, 0.7, effectiveReasoning), stream: true };
         if (toolsOn) {
           params.tools = QUIZ_TOOLS;
           params.tool_choice = "auto";
